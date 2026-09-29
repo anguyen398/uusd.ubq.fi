@@ -6,7 +6,7 @@ import type { PriceService } from "../services/price-service.ts";
 import type { NotificationManager } from "./notification-manager.ts";
 import type { CentralizedRefreshService, RefreshData } from "../services/centralized-refresh-service.ts";
 import type { TokenBalance, InventoryBarState } from "../types/inventory.types.ts";
-import { formatTokenAmount, formatUsdValue, calculateTotalUsdValue, isBalanceZero } from "../utils/token-utils.ts";
+import { formatTokenAmount, formatUsdValue, calculateTotalUsdValue, isBalanceZero, mergeTokenBalances } from "../utils/token-utils.ts";
 import { batchFetchTokenBalances } from "../utils/batch-request-utils.ts";
 
 import icons from "./icons.ts";
@@ -106,27 +106,21 @@ export class InventoryBarComponent {
         })),
       });
 
-      // Merge new balance data with existing cached values
-      // This prevents clearing existing values when partial updates arrive
-      const updatedBalances = [...this._state.balances];
-
-      // Update each token balance individually
-      data.tokenBalances.forEach((newBalance) => {
-        const existingIndex = updatedBalances.findIndex((existing) => existing.symbol === newBalance.symbol);
-
-        if (existingIndex >= 0) {
-          // ONLY update if we have valid data - NO FALLBACKS
-          if (newBalance.balance !== undefined && newBalance.usdValue !== undefined) {
-            updatedBalances[existingIndex] = newBalance;
-          } else {
-            console.error(`INVALID DATA for ${newBalance.symbol} - not updating. Balance: ${newBalance.balance}, USD: ${newBalance.usdValue}`);
-            // Keep existing value in updatedBalances - don't clear it
-          }
-        } else {
-          // Add new token balance
-          updatedBalances.push(newBalance);
+      // ONLY accept entries with valid data - NO FALLBACKS
+      const validBalances = data.tokenBalances.filter((newBalance) => {
+        if (newBalance.balance !== undefined && newBalance.usdValue !== undefined) {
+          return true;
         }
+        console.error(
+          `INVALID DATA for ${newBalance.symbol} (${newBalance.address}) - not updating. Balance: ${newBalance.balance}, USD: ${newBalance.usdValue}`
+        );
+        return false; // Keep the existing cached value - don't clear it
       });
+
+      // Merge new balance data with existing cached values, keyed by token address
+      // This prevents clearing existing values when partial updates arrive and keeps
+      // distinct contracts that share a symbol from overwriting each other
+      const updatedBalances = mergeTokenBalances(this._state.balances, validBalances);
 
       // Update state with merged data
       this._state.balances = updatedBalances;
@@ -230,7 +224,8 @@ export class InventoryBarComponent {
   }
 
   /**
-   * Load token balances for the connected wallet using JSON-RPC 2.0 batch requests
+   * Load core token balances (LUSD, UUSD, UBQ) for the connected wallet using JSON-RPC 2.0 batch requests
+   * and merge them into the existing inventory snapshot
    */
   private async _loadBalances(isBackgroundRefresh: boolean = false): Promise<void> {
     if (!this._state.isConnected) {
@@ -285,8 +280,10 @@ export class InventoryBarComponent {
 
       const balances = await Promise.all(balancePromises);
 
-      this._state.balances = balances;
-      this._state.totalUsdValue = calculateTotalUsdValue(balances);
+      // Merge the core-token results into the existing snapshot by address so this partial
+      // refresh keeps every other still-owned token (and its selection) in the inventory
+      this._state.balances = mergeTokenBalances(this._state.balances, balances);
+      this._state.totalUsdValue = calculateTotalUsdValue(this._state.balances);
       this._state.isLoading = false;
 
       this._renderBalances();

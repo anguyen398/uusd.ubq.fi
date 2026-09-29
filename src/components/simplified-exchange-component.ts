@@ -155,7 +155,6 @@ export class SimplifiedExchangeComponent {
   }
 
   private _renderTokenOptions() {
-    const refreshData = this._services.centralizedRefreshService.getLastData();
     const selectEl = document.querySelector("#tokenSelect") as HTMLSelectElement;
     if (!selectEl) {
       return;
@@ -163,11 +162,18 @@ export class SimplifiedExchangeComponent {
     const yourTokenGroup = document.getElementById("yourTokenGroup") as HTMLOptGroupElement;
     const otherTokenGroup = document.getElementById("otherTokenGroup") as HTMLOptGroupElement;
 
-    if (refreshData?.tokenBalances) {
+    // Remember the active token so the rebuild below can restore it by address
+    const previousAddress = selectEl.value;
+
+    // "Your Tokens" comes from the address-keyed inventory cache (merged across partial refreshes),
+    // the same source auto-population reads, instead of the raw refresh payload
+    const holdings = this._isWalletConnected() ? this._services.inventoryBar.getBalances().filter((balance) => balance.balance > 0n) : [];
+
+    if (holdings.length > 0) {
       yourTokenGroup.style.display = "";
       otherTokenGroup.style.display = "";
       if (
-        refreshData.tokenBalances.some((balance) => areAddressesEqual(balance.address, INVENTORY_TOKENS.LUSD.address)) &&
+        holdings.some((balance) => areAddressesEqual(balance.address, INVENTORY_TOKENS.LUSD.address)) &&
         !yourTokenGroup.querySelector(`option[value="${INVENTORY_TOKENS.LUSD.address}"i]`)
       ) {
         // Ensure LUSD is always in the first position
@@ -178,7 +184,7 @@ export class SimplifiedExchangeComponent {
         option.text = INVENTORY_TOKENS.LUSD.symbol.substring(0, 10);
         yourTokenGroup.insertBefore(option, yourTokenGroup.firstChild);
       }
-      refreshData.tokenBalances.forEach((balance) => {
+      holdings.forEach((balance) => {
         if (yourTokenGroup.querySelector(`option[value="${balance.address}"i]`)) {
           return; // Token already exists
         }
@@ -193,7 +199,7 @@ export class SimplifiedExchangeComponent {
       });
       // Remove old user's tokens
       yourTokenGroup.querySelectorAll("option").forEach((opt) => {
-        if (!refreshData.tokenBalances?.some((balance) => areAddressesEqual(balance.address, opt.value as Address))) {
+        if (!holdings.some((balance) => areAddressesEqual(balance.address, opt.value as Address))) {
           opt.remove();
         }
       });
@@ -230,6 +236,38 @@ export class SimplifiedExchangeComponent {
         opt.remove();
       }
     });
+
+    this._restoreTokenSelection(selectEl, previousAddress);
+  }
+
+  /**
+   * Re-select the previously active token after the options were rebuilt, falling back to LUSD when it is
+   * no longer offered. When the active token had to change, the amount and quote computed for the old token
+   * are discarded so the selector, input and output always describe the same token.
+   */
+  private _restoreTokenSelection(selectEl: HTMLSelectElement, previousAddress: string) {
+    const previousOption = previousAddress ? selectEl.querySelector<HTMLOptionElement>(`option[value="${previousAddress}"i]`) : null;
+    const activeOption = previousOption ?? selectEl.querySelector<HTMLOptionElement>(`option[value="${INVENTORY_TOKENS.LUSD.address}"i]`);
+    if (!activeOption) {
+      return;
+    }
+    activeOption.selected = true;
+
+    if (!previousAddress || areAddressesEqual(previousAddress as Address, activeOption.value as Address)) {
+      return; // Nothing was selected before, or the selection survived the rebuild
+    }
+
+    this._state.routeResult = null;
+    if (this._state.direction === "deposit") {
+      // The entered amount belonged to the old input token; clear it and re-populate for the new one
+      const amountInput = document.getElementById("exchangeAmount") as HTMLInputElement;
+      if (amountInput) amountInput.value = "";
+      this._state.amount = "";
+      this._autoPopulateMaxBalance();
+    } else {
+      // The input is still UUSD; only the output token changed, so re-quote
+      void this._calculateRoute();
+    }
   }
 
   /**
@@ -618,13 +656,7 @@ export class SimplifiedExchangeComponent {
       }
     }
 
-    // Update input label
-    const amountLabel = document.getElementById("amountLabel");
     const amountInput = document.getElementById("exchangeAmount") as HTMLInputElement;
-
-    if (amountLabel) {
-      amountLabel.textContent = this._state.direction === "deposit" ? "LUSD" : "UUSD";
-    }
 
     if (amountInput) {
       if (isBalancesLoading) {
@@ -636,7 +668,8 @@ export class SimplifiedExchangeComponent {
       }
     }
 
-    // Show/hide options based on protocol state and direction
+    // Rebuild the token selector (restoring the active token) before anything reads the selection,
+    // then show/hide options based on protocol state and direction
     this._renderTokenOptions();
     this._renderOptions();
     this._renderOutput();
@@ -1145,9 +1178,8 @@ export class SimplifiedExchangeComponent {
 
     try {
       const selectedToken = this._state.direction === "deposit" ? this._getSelectedToken() : INVENTORY_TOKENS.UUSD;
-      const tokenSymbol = selectedToken.symbol;
-      if (hasAvailableBalance(this._services.inventoryBar, tokenSymbol)) {
-        const maxBalance = getMaxTokenBalance(this._services.inventoryBar, tokenSymbol);
+      if (hasAvailableBalance(this._services.inventoryBar, selectedToken.address)) {
+        const maxBalance = getMaxTokenBalance(this._services.inventoryBar, selectedToken.address);
         amountInput.value = maxBalance;
         this._state.amount = maxBalance;
         void this._calculateRoute();

@@ -1,21 +1,29 @@
-import { formatUnits } from "viem";
-import type { TokenBalance as _TokenBalance } from "../types/inventory.types.ts";
+import { formatUnits, type Address } from "viem";
+import type { TokenBalance } from "../types/inventory.types.ts";
 import type { InventoryBarComponent } from "../components/inventory-bar-component.ts";
+import { areAddressesEqual } from "./format-utils.ts";
 
 /**
  * Balance utilities for auto-population of input fields
  */
 
 /**
+ * Find a token balance in the inventory bar by contract address
+ * Keyed by address rather than symbol so distinct contracts sharing a symbol never collide
+ */
+function findTokenBalance(inventoryBar: InventoryBarComponent, tokenAddress: Address): TokenBalance | undefined {
+  return inventoryBar.getBalances().find((balance) => areAddressesEqual(balance.address, tokenAddress));
+}
+
+/**
  * Get the maximum available balance for a specific token from inventory bar
  */
-export function getMaxTokenBalance(inventoryBar: InventoryBarComponent, tokenSymbol: string): string {
+export function getMaxTokenBalance(inventoryBar: InventoryBarComponent, tokenAddress: Address): string {
   if (!inventoryBar) {
     return "0";
   }
 
-  const balances = inventoryBar.getBalances();
-  const tokenBalance = balances.find((balance) => balance.symbol === tokenSymbol);
+  const tokenBalance = findTokenBalance(inventoryBar, tokenAddress);
 
   if (!tokenBalance) {
     return "0";
@@ -33,9 +41,8 @@ export function getMaxTokenBalance(inventoryBar: InventoryBarComponent, tokenSym
 /**
  * Check if a token balance is available and greater than zero
  */
-export function hasAvailableBalance(inventoryBar: InventoryBarComponent, tokenSymbol: string): boolean {
-  const balances = inventoryBar.getBalances();
-  const tokenBalance = balances.find((balance) => balance.symbol === tokenSymbol);
+export function hasAvailableBalance(inventoryBar: InventoryBarComponent, tokenAddress: Address): boolean {
+  const tokenBalance = findTokenBalance(inventoryBar, tokenAddress);
 
   if (!tokenBalance) {
     return false;
@@ -47,9 +54,8 @@ export function hasAvailableBalance(inventoryBar: InventoryBarComponent, tokenSy
 /**
  * Get formatted balance display for a specific token
  */
-export function getBalanceDisplay(inventoryBar: InventoryBarComponent, tokenSymbol: string): string {
-  const balances = inventoryBar.getBalances();
-  const tokenBalance = balances.find((balance) => balance.symbol === tokenSymbol);
+export function getBalanceDisplay(inventoryBar: InventoryBarComponent, tokenAddress: Address): string {
+  const tokenBalance = findTokenBalance(inventoryBar, tokenAddress);
 
   if (!tokenBalance) {
     return "0";

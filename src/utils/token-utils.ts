@@ -1,5 +1,6 @@
 import { formatUnits, parseUnits, type Address as _Address } from "viem";
 import type { TokenBalance, TokenMetadata } from "../types/inventory.types.ts";
+import { areAddressesEqual } from "./format-utils.ts";
 
 /**
  * Format token amount for display with appropriate decimal places
@@ -47,6 +48,28 @@ export function calculateTotalUsdValue(balances: TokenBalance[]): number {
   return balances.reduce((total, balance) => {
     return total + (balance.usdValue || 0);
   }, 0);
+}
+
+/**
+ * Merge incoming token balances into an existing snapshot, keyed by contract address
+ * Entries for an address already in the snapshot are replaced, new addresses are appended and
+ * addresses missing from the incoming list are kept, so a partial refresh never drops holdings
+ * and distinct contracts that share a symbol stay separate
+ */
+export function mergeTokenBalances(existing: TokenBalance[], incoming: TokenBalance[]): TokenBalance[] {
+  const merged = [...existing];
+
+  incoming.forEach((balance) => {
+    const existingIndex = merged.findIndex((current) => areAddressesEqual(current.address, balance.address));
+
+    if (existingIndex >= 0) {
+      merged[existingIndex] = balance;
+    } else {
+      merged.push(balance);
+    }
+  });
+
+  return merged;
 }
 
 /**
